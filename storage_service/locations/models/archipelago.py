@@ -60,6 +60,25 @@ class Archipelago(models.Model):
                 LOGGER.error(f'File upload failed with status code {response.status_code}: {response.text}')
         except (IOError, requests.exceptions.RequestException) as e:
             LOGGER.error("Error during AIP upload to archipelago", str(e))
+
+    def _upload_tsm(self, title, source_path):
+        command = ["rsync", "-z", source_path, "lacddt@dp-tsm-staging.is.ed.ac.uk:~/staging/"]
+        LOGGER.info(command)
+        LOGGER.info('about to upload to TSM')
+        try:
+            out = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+            LOGGER.info(out)
+            command = ['ssh lacddt@dp-tsm-staging.is.ed.ac.uk "echo {} > ~/staging/{}.done"'.format(title, source_path.split('/')[-1][:-3])]
+            out = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+            LOGGER.info(out)
+        except OSError as err:
+            raise Exception("Could not run {}: {}.".format(command[0], err))
+        except subprocess.CalledProcessError as err:
+            raise Exception(
+                "Could not archive {} using {}: {}.".format(
+                    source_path, command[0], err
+                )
+            )
     
     def extract_title_from_mets_xml(self, xml_string):
         try:
@@ -207,6 +226,8 @@ class Archipelago(models.Model):
         try:
             fid = self._upload_file(filename, source_path)
             LOGGER.info(f"fid found to be {fid}")
+            LOGGER.info("NOW UPLOADING TO TSM")
+            self._upload_tsm(title, source_path)
             strawberry = self.get_dc_metadata(mets_xml) #getting other dublic core metadata fields
             if strawberry is not None:
                 try:
