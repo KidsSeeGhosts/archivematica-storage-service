@@ -43,12 +43,15 @@ class Archipelago(models.Model):
         verbose_name = _("Archipelago via REST API")
         app_label = "locations"
 
-    ALLOWED_LOCATION_PURPOSE = [Location.AIP_STORAGE]
+    ALLOWED_LOCATION_PURPOSE = [Location.AIP_STORAGE, Location.DIP_STORAGE]
 
-    def _upload_file(self, filename, source_path):
+    def _upload_file(self, filename, source_path, package_type):
         """Uploads zip file to Archipelago before creating new entity
         so if upload fails, new entity not created"""
-        url = self.archipelago_url + "/jsonapi/node/aip/field_file_drop"
+        if package_type == "DIP":
+            url = self.archipelago_url + "/jsonapi/node/dip/field_file_drop"
+        else:
+            url = self.archipelago_url + "/jsonapi/node/aip/field_file_drop"
         headers = {
             "Content-Type": "application/octet-stream",
             "Content-Disposition": f'file; filename="{filename}"',
@@ -64,7 +67,10 @@ class Archipelago(models.Model):
                 response.raise_for_status()
 
             if response.status_code == 201:
-                LOGGER.info("AIP file uploaded successfully!")
+                if package_type == "DIP":
+                    LOGGER.info("DIP file uploaded successfully!")
+                else:
+                    LOGGER.info("AIP file uploaded successfully!")
                 response_json = response.json()
                 fid = (
                     response_json.get("data", {})
@@ -77,7 +83,10 @@ class Archipelago(models.Model):
                     f"File upload failed with status code {response.status_code}: {response.text}"
                 )
         except (OSError, requests.exceptions.RequestException) as e:
-            LOGGER.error("Error during AIP upload to archipelago %s", str(e))
+            if package_type == "DIP":
+                LOGGER.error("Error during DIP upload to archipelago %s", str(e))
+            else:
+                LOGGER.error("Error during AIP upload to archipelago %s", str(e))
 
     def extract_title_from_mets_xml(self, xml_string):
         """Retrieves title from METs file or creates title from file name"""
@@ -149,6 +158,11 @@ class Archipelago(models.Model):
                         mets_path, input_path, err
                     )
                 )
+        elif package_type == "DIP":
+            for dip_file in os.listdir(input_path):
+                if dip_file.startswith("METS") and dip_file.endswith(".xml"):
+                    mets_path = os.path.join(input_path, dip_file)
+                    return etree.parse(mets_path)
 
     def _get_metadata(self, input_path, aip_uuid, package_type):
         """Extracts METS.xml from AIP"""
@@ -162,11 +176,14 @@ class Archipelago(models.Model):
             return None
         return etree.tostring(mets_el)
 
-    def _upload_metadata(self, fid, strawberry, title):
+    def _upload_metadata(self, fid, strawberry, title, package_type):
         """POSTs metadata via JSON API to create new entity on archipelago containing the file
         and metadata"""
         LOGGER.info("uploading metadata")
-        url = self.archipelago_url + "/jsonapi/node/aip"
+        if package_type == "DIP":
+            url = self.archipelago_url + "/jsonapi/node/dip"
+        else:
+            url = self.archipelago_url + "/jsonapi/node/aip"
         archivematica_zip_link = {
             "label": title,
             "archivematica_zip": fid,  # links new aip entity to uploaded zip file
@@ -182,15 +199,26 @@ class Archipelago(models.Model):
             **archivematica_zip_link,
         }  # these are our strawberry field
         json_metadata = json.dumps(combined_data)
-        request_data = {
-            "data": {
-                "type": "AIP",
-                "attributes": {
-                    "title": title,
-                    "field_descriptive_metadata": json_metadata,
-                },
+        if package_type == "DIP":
+            request_data = {
+                "data": {
+                    "type": "DIP",
+                    "attributes": {
+                        "title": title,
+                        "field_descriptive_metadata": json_metadata,
+                    },
+                }
             }
-        }
+        else:
+            request_data = {
+                "data": {
+                    "type": "AIP",
+                    "attributes": {
+                        "title": title,
+                        "field_descriptive_metadata": json_metadata,
+                    },
+                }
+            }
         json_data = json.dumps(request_data)
         try:
             response = requests.post(
@@ -202,13 +230,19 @@ class Archipelago(models.Model):
             response.raise_for_status()
 
             if response.status_code == 201:
-                LOGGER.info("AIP entity created successfully!")
+                if package_type == "DIP":
+                    LOGGER.info("DIP entity created successfully!")
+                else:
+                    LOGGER.info("AIP entity created successfully!")
             else:
                 LOGGER.error(
                     f"File upload failed with status code {response.status_code}: {response.text}"
                 )
         except (OSError, requests.exceptions.RequestException) as e:
-            LOGGER.error("Error during AIP upload to archipelago %s", str(e))
+            if package_type == "DIP":
+                LOGGER.error("Error during DIP upload to archipelago %s", str(e))
+            else:
+                LOGGER.error("Error during AIP upload to archipelago %s", str(e))
 
     def move_from_storage_service(self, source_path, destination_path, package=None):
         """Moves self.staging_path/src_path to dest_path."""
@@ -221,33 +255,46 @@ class Archipelago(models.Model):
             package,
         )
         field_uuid = package.uuid
-        mets_xml = self._get_metadata(source_path, field_uuid, package_type="AIP")
+        package_type = package.package_type
+        mets_xml = self._get_metadata(source_path, field_uuid, package_type)
         title = self.extract_title_from_mets_xml(mets_xml)
         filename = os.path.basename(source_path)
         if title is None:  # use transfer name if title was not defined in metadata.
             parts = filename.split("-")
             if len(parts) < 2:
-                title = "Default title for Archipelago AIP"
+                if package_type == "DIP":
+                    title = "Default title for Archipelago DIP"
+                else:
+                    title = "Default title for Archipelago AIP"
             else:
                 title = parts[0]  # splitting title from uuid
         try:
-            fid = self._upload_file(filename, source_path)
+            fid = self._upload_file_dip(filename, source_path, package_type)
             LOGGER.info(f"fid found to be {fid}")
             strawberry = self.get_dc_metadata(
                 mets_xml
             )  # getting other dublic core metadata fields
             if strawberry is not None:
                 try:
-                    self._upload_metadata(fid, strawberry, title)
+                    self._upload_metadata(fid, strawberry, title, package_type)
                 except Exception as e:
-                    LOGGER.error(
-                        "could not upload metadata (make aip entity to archipelago): %s",
-                        str(e),
-                    )
+                    if package_type == "DIP":
+                        LOGGER.error(
+                            "could not upload metadata (make DIP entity to archipelago): %s",
+                            str(e),
+                        )
+                    else:
+                        LOGGER.error(
+                            "could not upload metadata (make AIP entity to archipelago): %s",
+                            str(e),
+                        )
             else:
                 LOGGER.info("strawberry was not found")
         except Exception as e:
-            LOGGER.error("could not upload AIP file: %s", str(e))
+            if package_type == "DIP":
+                LOGGER.error("could not upload intiial ZIP file for DIP: %s", str(e))
+            else:
+                LOGGER.error("could not upload intiial ZIP file for AIP: %s", str(e))
 
     def browse(self, path):
         raise NotImplementedError("Archipelago does not implement browse")
