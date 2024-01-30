@@ -269,7 +269,7 @@ class Archipelago(models.Model):
             else:
                 title = parts[0]  # splitting title from uuid
         try:
-            fid = self._upload_file_dip(filename, source_path, package_type)
+            fid = self._upload_file(filename, source_path, package_type)
             LOGGER.info(f"fid found to be {fid}")
             strawberry = self.get_dc_metadata(
                 mets_xml
