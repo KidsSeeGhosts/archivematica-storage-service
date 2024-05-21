@@ -95,6 +95,7 @@ RUN set -ex \
 		libxslt1-dev \
 		libz-dev \
 		media-types \
+		openssh-client \
 		p7zip-full \
 		rclone \
 		rng-tools-debian \
