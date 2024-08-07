@@ -262,6 +262,7 @@ class Archipelago(models.Model):
                 title = "Default title for Archipelago AIP"
             else:
                 title = parts[0]  # splitting title from uuid
+        LOGGER.info(f"field uuid is {field_uuid}")
         try:
             fid = self._upload_file(filename, source_path)
             LOGGER.info(f"fid found to be {fid}")
@@ -272,7 +273,9 @@ class Archipelago(models.Model):
             )  # getting other dublic core metadata fields
             if strawberry is not None:
                 try:
-                    self._upload_metadata(fid, strawberry, title)
+                    strawberry_dict = json.loads(strawberry)
+                    strawberry_dict["aip_uuid"] = str(field_uuid)
+                    self._upload_metadata(fid, json.dumps(strawberry_dict), title)
                 except Exception as e:
                     LOGGER.error(
                         "could not upload metadata (make aip entity to archipelago): %s",
