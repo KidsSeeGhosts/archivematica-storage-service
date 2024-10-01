@@ -144,7 +144,7 @@ SECRET_KEY = "SECRET_KEY"
 # See https://docs.djangoproject.com/en/1.5/ref/settings/#allowed-hosts
 ALLOWED_HOSTS = ["*"]
 # ######## END SITE CONFIGURATION
-CSRF_TRUSTED_ORIGINS = ["https://test.dp-storageservice.is.ed.ac.uk"]
+CSRF_TRUSTED_ORIGINS = ["https://dp-storageservice.is.ed.ac.uk"]
 
 # ######## FIXTURE CONFIGURATION
 # See:
