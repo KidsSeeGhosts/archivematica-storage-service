@@ -45,6 +45,22 @@ class Archipelago(models.Model):
 
     ALLOWED_LOCATION_PURPOSE = [Location.AIP_STORAGE]
 
+    def read_metadata_json(self, input_path):
+        """Reads metadata.json file from the transfer location."""
+        metadata_json_path = os.path.join(os.path.dirname(input_path), "metadata.json")
+        if not os.path.exists(metadata_json_path):
+            LOGGER.info("No metadata.json file found.")
+            return {}
+
+        try:
+            with open(metadata_json_path) as metadata_file:
+                metadata = json.load(metadata_file)
+                LOGGER.info("Metadata.json content: %s", metadata)
+                return metadata
+        except Exception as e:
+            LOGGER.error("Error reading metadata.json: %s", str(e))
+            return {}
+
     def _upload_file(self, filename, source_path):
         """Uploads zip file to Archipelago before creating new entity
         so if upload fails, new entity not created"""
@@ -126,7 +142,34 @@ class Archipelago(models.Model):
             LOGGER.error("Error extracting title from METS XML: %s", str(e))
         return None
 
-    def get_dc_metadata(self, xml_string):
+    def merge_dc_metadata(self, dc_fields, metadata_json):
+        """Merge dc fields from METS XML and metadata.json."""
+        for key, value in metadata_json.items():
+            if key.startswith("dc."):
+                # Convert 'dc.title' to 'field_title'
+                field_name = "field_" + key.split(".")[1]
+                dc_fields[field_name] = value
+
+        # Handle the collection field for ismemberof
+        if "dc.collection_nid" in metadata_json:
+            dc_fields["ismemberof"] = metadata_json["dc.collection_nid"]
+
+        # Adding the entity mapping to the strawberry
+        dc_fields["ap:entitymapping"] = {
+            "entity:file": [
+                "model",
+                "audios",
+                "images",
+                "videos",
+                "documents",
+                "upload_associated_warcs",
+            ],
+            "entity:node": ["ispartof", "ismemberof"],
+        }
+
+        return dc_fields
+
+    def get_dc_metadata(self, xml_string, input_path):
         """Extracts Dublin Core metadata from METS file"""
         try:
             root = etree.fromstring(xml_string)
@@ -142,8 +185,11 @@ class Archipelago(models.Model):
                     f"dc value added which is {field_value} where the field is {appended_field}"
                 )
                 dc_fields[appended_field] = field_value
+
+            metadata_json = self.read_metadata_json(input_path)
+            dc_fields = self.merge_dc_metadata(dc_fields, metadata_json)
             strawberry = json.dumps(dc_fields)
-            LOGGER.info(f"strawberry json is {strawberry}")
+            LOGGER.info(f"Merged complete strawberry json is {strawberry}")
             return strawberry
 
         except Exception as e:
@@ -269,7 +315,7 @@ class Archipelago(models.Model):
             LOGGER.info("NOW UPLOADING TO TSM")
             self._upload_tsm(title, source_path)
             strawberry = self.get_dc_metadata(
-                mets_xml
+                mets_xml, source_path
             )  # getting other dublic core metadata fields
             if strawberry is not None:
                 try:
