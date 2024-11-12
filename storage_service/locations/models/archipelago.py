@@ -48,6 +48,7 @@ class Archipelago(models.Model):
     def read_metadata_json(self, input_path):
         """Reads metadata.json file from the transfer location."""
         metadata_json_path = os.path.join(os.path.dirname(input_path), "metadata.json")
+        LOGGER.info("Metadata path being searched: %s", metadata_json_path)
         if not os.path.exists(metadata_json_path):
             LOGGER.info("No metadata.json file found.")
             return {}
@@ -298,6 +299,7 @@ class Archipelago(models.Model):
             destination_path,
             package,
         )
+        LOGGER.info(f"source path is {source_path}")
         field_uuid = package.uuid
         mets_xml = self._get_metadata(source_path, field_uuid, package_type="AIP")
         title = self.extract_title_from_mets_xml(mets_xml)
@@ -314,6 +316,8 @@ class Archipelago(models.Model):
             LOGGER.info(f"fid found to be {fid}")
             LOGGER.info("NOW UPLOADING TO TSM")
             self._upload_tsm(title, source_path)
+            LOGGER.info(f"SOURCE PATH IS found to be {source_path}")
+            LOGGER.info(f"DESTINATION PATH found to be {destination_path}")
             strawberry = self.get_dc_metadata(
                 mets_xml, source_path
             )  # getting other dublic core metadata fields
