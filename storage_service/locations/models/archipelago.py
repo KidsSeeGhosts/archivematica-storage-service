@@ -263,7 +263,7 @@ class Archipelago(models.Model):
         """Extracts METS.xml from AIP"""
         output_dir = os.path.dirname(input_path) + "/"
         dirname = os.path.splitext(os.path.basename(input_path))[0]
-        mets_el, metadata_json_path = self._get_mets_el(
+        mets_el, metadata_json_path = self._get_files(
             package_type, output_dir, input_path, dirname, aip_uuid
         )
         if mets_el is None:
