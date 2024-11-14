@@ -45,21 +45,40 @@ class Archipelago(models.Model):
 
     ALLOWED_LOCATION_PURPOSE = [Location.AIP_STORAGE]
 
-    def read_metadata_json(self, input_path):
-        """Reads metadata.json file from the transfer location."""
-        metadata_json_path = os.path.join(os.path.dirname(input_path), "metadata.json")
-        LOGGER.info("Metadata path being searched: %s", metadata_json_path)
-        if not os.path.exists(metadata_json_path):
-            LOGGER.info("No metadata.json file found.")
-            return {}
-
+    def read_metadata_json(self, input_path, output_dir):
+        LOGGER.info("Extracting .7z file to find metadata.json")
+        command = [
+            "unar",
+            "-force-overwrite",
+            "-o",
+            output_dir,
+            input_path,
+        ]
         try:
+            # Extract the .7z file
+            subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            ).communicate()
+
+            # Construct the path to metadata.json inside the unzipped folder
+            metadata_json_path = os.path.join(
+                output_dir, "data", "objects", "metadata.json"
+            )
+            if not os.path.exists(metadata_json_path):
+                LOGGER.error(
+                    "metadata.json not found at expected location: %s",
+                    metadata_json_path,
+                )
+                return {}
+
+            # Read and load the metadata.json file
             with open(metadata_json_path) as metadata_file:
                 metadata = json.load(metadata_file)
-                LOGGER.info("Metadata.json content: %s", metadata)
+                LOGGER.info("Successfully read metadata.json: %s", metadata)
                 return metadata
+
         except Exception as e:
-            LOGGER.error("Error reading metadata.json: %s", str(e))
+            LOGGER.error("Error extracting or reading metadata.json: %s", str(e))
             return {}
 
     def _upload_file(self, filename, source_path):
@@ -186,11 +205,22 @@ class Archipelago(models.Model):
                     f"dc value added which is {field_value} where the field is {appended_field}"
                 )
                 dc_fields[appended_field] = field_value
-
-            metadata_json = self.read_metadata_json(input_path)
+            output_dir = os.path.dirname(input_path) + "/extracted/"
+            os.makedirs(output_dir, exist_ok=True)
+            metadata_json = self.read_metadata_json(input_path, output_dir)
             dc_fields = self.merge_dc_metadata(dc_fields, metadata_json)
             strawberry = json.dumps(dc_fields)
             LOGGER.info(f"Merged complete strawberry json is {strawberry}")
+            try:
+                subprocess.Popen(
+                    ["rm", "-rf", output_dir],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            except Exception as cleanup_error:
+                LOGGER.warning(
+                    "Failed to clean up extracted files: %s", str(cleanup_error)
+                )
             return strawberry
 
         except Exception as e:
