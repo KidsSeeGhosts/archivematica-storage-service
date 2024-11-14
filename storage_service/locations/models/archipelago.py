@@ -45,40 +45,20 @@ class Archipelago(models.Model):
 
     ALLOWED_LOCATION_PURPOSE = [Location.AIP_STORAGE]
 
-    def read_metadata_json(self, input_path, output_dir):
-        LOGGER.info("Extracting .7z file to find metadata.json")
-        command = [
-            "unar",
-            "-force-overwrite",
-            "-o",
-            output_dir,
-            input_path,
-        ]
+    def read_metadata_json(self, input_path):
+        """Reads metadata.json file from the transfer location."""
+        metadata_json_path = os.path.join(os.path.dirname(input_path), "metadata.json")
+        if not os.path.exists(metadata_json_path):
+            LOGGER.info("No metadata.json file found.")
+            return {}
+
         try:
-            # Extract the .7z file
-            subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            ).communicate()
-
-            # Construct the path to metadata.json inside the unzipped folder
-            metadata_json_path = os.path.join(
-                output_dir, "data", "objects", "metadata.json"
-            )
-            if not os.path.exists(metadata_json_path):
-                LOGGER.error(
-                    "metadata.json not found at expected location: %s",
-                    metadata_json_path,
-                )
-                return {}
-
-            # Read and load the metadata.json file
             with open(metadata_json_path) as metadata_file:
                 metadata = json.load(metadata_file)
-                LOGGER.info("Successfully read metadata.json: %s", metadata)
+                LOGGER.info("Metadata.json content: %s", metadata)
                 return metadata
-
         except Exception as e:
-            LOGGER.error("Error extracting or reading metadata.json: %s", str(e))
+            LOGGER.error("Error reading metadata.json: %s", str(e))
             return {}
 
     def _upload_file(self, filename, source_path):
@@ -189,7 +169,7 @@ class Archipelago(models.Model):
 
         return dc_fields
 
-    def get_dc_metadata(self, xml_string, input_path):
+    def get_dc_metadata(self, xml_string, input_path, metadata_json_path):
         """Extracts Dublin Core metadata from METS file"""
         try:
             root = etree.fromstring(xml_string)
@@ -207,7 +187,7 @@ class Archipelago(models.Model):
                 dc_fields[appended_field] = field_value
             output_dir = os.path.dirname(input_path) + "/extracted/"
             os.makedirs(output_dir, exist_ok=True)
-            metadata_json = self.read_metadata_json(input_path, output_dir)
+            metadata_json = self.read_metadata_json(metadata_json_path)
             dc_fields = self.merge_dc_metadata(dc_fields, metadata_json)
             strawberry = json.dumps(dc_fields)
             LOGGER.info(f"Merged complete strawberry json is {strawberry}")
@@ -228,15 +208,24 @@ class Archipelago(models.Model):
         return None
 
     @staticmethod
-    def _get_mets_el(package_type, output_dir, input_path, dirname, aip_uuid):
-        """Locate, extract (if necessary), XML-parse and return the METS file
+    def _get_files(package_type, output_dir, input_path, dirname, aip_uuid):
+        """Locate, extract (if necessary), and return the METS XML element and metadata.json file path
         for this package.
         """
         if package_type == "AIP":
+            # Define paths for METS file and metadata.json
             relative_mets_path = os.path.join(
                 dirname, "data", "METS." + str(aip_uuid) + ".xml"
             )
+            relative_metadata_path = os.path.join(
+                dirname, "data", "objects", "metadata.json"
+            )
+
+            # Define full paths for extraction
             mets_path = os.path.join(output_dir, relative_mets_path)
+            metadata_path = os.path.join(output_dir, relative_metadata_path)
+
+            # Extraction command
             command = [
                 "unar",
                 "-force-overwrite",
@@ -244,32 +233,43 @@ class Archipelago(models.Model):
                 output_dir,
                 input_path,
                 relative_mets_path,
+                relative_metadata_path,
             ]
+
             try:
+                # Run the extraction process
                 subprocess.Popen(
                     command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
                 ).communicate()
+
+                # Parse the METS XML
                 mets_el = etree.parse(mets_path)
+
+                # Remove the extracted METS file to clean up
                 os.remove(mets_path)
-                return mets_el
-            except subprocess.CalledProcessError as err:
-                raise Exception(
-                    "Could not extract {} from {}: {}.".format(
-                        mets_path, input_path, err
+
+                # Check if the metadata.json exists at the expected location
+                if not os.path.exists(metadata_path):
+                    raise FileNotFoundError(
+                        f"metadata.json not found at expected location: {metadata_path}"
                     )
-                )
+
+                return mets_el, metadata_path
+
+            except subprocess.CalledProcessError as err:
+                raise Exception(f"Could not extract files from {input_path}: {err}.")
 
     def _get_metadata(self, input_path, aip_uuid, package_type):
         """Extracts METS.xml from AIP"""
         output_dir = os.path.dirname(input_path) + "/"
         dirname = os.path.splitext(os.path.basename(input_path))[0]
-        mets_el = self._get_mets_el(
+        mets_el, metadata_json_path = self._get_mets_el(
             package_type, output_dir, input_path, dirname, aip_uuid
         )
         if mets_el is None:
             LOGGER.error("Failed to get METS element")
             return None
-        return etree.tostring(mets_el)
+        return etree.tostring(mets_el), metadata_json_path
 
     def _upload_metadata(self, fid, strawberry, title):
         """POSTs metadata via JSON API to create new entity on archipelago containing the file
@@ -331,7 +331,9 @@ class Archipelago(models.Model):
         )
         LOGGER.info(f"source path is {source_path}")
         field_uuid = package.uuid
-        mets_xml = self._get_metadata(source_path, field_uuid, package_type="AIP")
+        mets_xml, metadata_json_path = self._get_metadata(
+            source_path, field_uuid, package_type="AIP"
+        )
         title = self.extract_title_from_mets_xml(mets_xml)
         filename = os.path.basename(source_path)
         if title is None:  # use transfer name if title was not defined in metadata.
@@ -349,7 +351,7 @@ class Archipelago(models.Model):
             LOGGER.info(f"SOURCE PATH IS found to be {source_path}")
             LOGGER.info(f"DESTINATION PATH found to be {destination_path}")
             strawberry = self.get_dc_metadata(
-                mets_xml, source_path
+                mets_xml, source_path, metadata_json_path
             )  # getting other dublic core metadata fields
             if strawberry is not None:
                 try:
