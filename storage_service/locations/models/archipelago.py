@@ -56,6 +56,8 @@ class Archipelago(models.Model):
             with open(metadata_json_path) as metadata_file:
                 metadata = json.load(metadata_file)
                 LOGGER.info("Metadata.json content: %s", metadata)
+                os.remove(metadata_json_path)
+                LOGGER.info("metadata.json file deleted.")
                 return metadata
         except Exception as e:
             LOGGER.error("Error reading metadata.json: %s", str(e))
@@ -190,6 +192,24 @@ class Archipelago(models.Model):
             metadata_json = self.read_metadata_json(metadata_json_path)
             dc_fields = self.merge_dc_metadata(dc_fields, metadata_json)
             strawberry = json.dumps(dc_fields)
+
+            LOGGER.info(f"Merged complete strawberry json is {strawberry}")
+
+            # Write the merged metadata back into the XML (updating DC fields)
+            for dc_element in root.findall(".//dc:*", namespaces=namespaces):
+                field_name = dc_element.tag.split("}")[-1]
+                if field_name in dc_fields:
+                    new_value = dc_fields.get("field_" + field_name)
+                    if new_value:
+                        dc_element.text = new_value
+
+            # Save the updated XML back to the original input path
+            updated_xml = etree.tostring(
+                root, pretty_print=True, encoding="utf-8"
+            ).decode("utf-8")
+            with open(input_path, "w", encoding="utf-8") as file:
+                file.write(updated_xml)
+
             LOGGER.info(f"Merged complete strawberry json is {strawberry}")
             try:
                 subprocess.Popen(
