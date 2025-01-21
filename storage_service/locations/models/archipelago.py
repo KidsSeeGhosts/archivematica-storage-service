@@ -58,10 +58,12 @@ class Archipelago(models.Model):
                 LOGGER.info("Metadata.json content: %s", metadata)
                 os.remove(metadata_json_path)
                 LOGGER.info("metadata.json file deleted.")
-                return metadata
+
+                # Always return the first element of the list
+                return metadata[0]
         except Exception as e:
             LOGGER.error("Error reading metadata.json: %s", str(e))
-            return None
+            return {}
 
     def _upload_file(self, filename, source_path):
         """Uploads zip file to Archipelago before creating new entity
