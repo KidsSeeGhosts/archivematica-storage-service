@@ -200,39 +200,37 @@ class Archipelago(models.Model):
 
                 LOGGER.info(f"Merged complete strawberry json is {strawberry}")
 
-                # Write the merged metadata back into the XML (updating DC fields)
-                for key, value in dc_fields.items():
-                    if key.startswith("field_"):
-                        field_name = key.split("field_")[
-                            -1
-                        ]  # Extract "title" from "field_title"
-                        field_tag = f"{{{namespaces['dc']}}}{field_name}"  # Ensure correct namespace
-
-                        # Locate the element inside METS
-                        element = root.find(
-                            f".//dc:{field_name}", namespaces=namespaces
+            # Write the merged metadata back into the XML (updating DC fields)
+            for key, value in dc_fields.items():
+                if isinstance(value, list):
+                    value = ", ".join(value)
+                if key.startswith("field_"):
+                    field_name = key.split("field_")[-1]
+                    field_tag = f"{{{namespaces['dc']}}}{field_name}"
+                    elements = root.findall(
+                        f".//dc:{field_name}", namespaces=namespaces
+                    )
+                    LOGGER.info(f"Found {len(elements)} elements for {field_name}")
+                    element = elements[0] if elements else None
+                    if element is None:
+                        metadata_section = root.find(
+                            ".//mets:dmdSec/mets:mdWrap/mets:xmlData",
+                            namespaces=namespaces,
                         )
+                        if metadata_section is not None:
+                            element = etree.Element(field_tag)
+                            metadata_section.append(element)
 
-                        if element is None:
-                            # Create a new element inside the correct METS section
-                            metadata_section = root.find(
-                                ".//mets:dmdSec/mets:mdWrap/mets:xmlData",
-                                namespaces=namespaces,
-                            )
-                            if metadata_section is not None:
-                                element = etree.Element(field_tag, nsmap=namespaces)
-                                metadata_section.append(element)  # Insert new DC field
+                    if element is not None:
+                        element.text = value
+                        LOGGER.info(f"Updated {field_name} with value: {value}")
 
-                        if element is not None:
-                            element.text = value  # Update or set new value
-
-                # Save the updated XML back to the original input path
-                updated_xml = etree.tostring(
-                    root, pretty_print=True, encoding="utf-8"
-                ).decode("utf-8")
-                with open(input_path, "w", encoding="utf-8") as file:
-                    file.write(updated_xml)
-                LOGGER.info(f"Updated METS file saved at {input_path}")
+            updated_xml = etree.tostring(
+                root, pretty_print=True, encoding="utf-8"
+            ).decode("utf-8")
+            with open(input_path, "w", encoding="utf-8") as file:
+                file.write(updated_xml)
+            LOGGER.info(f"Updated METS file saved at {input_path}")
 
             LOGGER.info(f"Merged complete strawberry json is {strawberry}")
             try:
